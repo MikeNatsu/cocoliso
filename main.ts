@@ -74,7 +74,7 @@ async function getNewProperties(game: GameInfo, pageId?: string): Promise<Record
       },
     } as CreatePageBodyParameters['properties']
   }
-  return body;
+  return body.properties;
 }
 
 async function updateEntries(games: GameInfo[]) {
