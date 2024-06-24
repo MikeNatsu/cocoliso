@@ -1,5 +1,6 @@
 import { GameDetails, GameInfo } from "./types.ts";
 import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
+import { CreatePageBodyParameters } from "https://deno.land/x/notion_sdk@v2.2.3/src/api-endpoints.ts";
 import { Client } from "https://deno.land/x/notion_sdk@v2.2.3/src/mod.ts";
 
 
@@ -36,6 +37,46 @@ async function getGameDetails(appId: GameInfo['appid']) {
 }
 
 
+// deno-lint-ignore no-explicit-any
+async function getNewProperties(game: GameInfo, pageId?: string): Promise<Record<string, any>> {
+  const details = await getGameDetails(game.appid);
+  const body = {
+    properties: {
+      "ID": {
+        type: "rich_text",
+        rich_text: [{
+          type: "text",
+          text: {
+            content: String(game.appid)
+          }
+        }],
+      },
+      "Name": {
+        type: "title",
+        title: [{
+          type: "text",
+          text: {
+            content: game.name,
+          },
+        }]
+      },
+      "Generos": {
+        type: "multi_select",
+        multi_select: (details?.genres?.map(genre => ({ name: genre.description?.replaceAll(',', ' ') })) ?? []),
+      },
+      "Categories": {
+        type: "multi_select",
+        multi_select: details?.categories?.map(category => ({ name: category.description?.replaceAll(',', ' ') })) ?? [],
+      },
+      "Desarrollador": {
+        type: "multi_select",
+        multi_select: details?.developers?.map(dev => ({ name: dev?.replaceAll(',', ' ') ?? "" })) ?? []
+      },
+    } as CreatePageBodyParameters['properties']
+  }
+  return body;
+}
+
 async function updateEntries(games: GameInfo[]) {
   const db = await notion.search({
     query: "Steam Videojuegos",
@@ -45,23 +86,20 @@ async function updateEntries(games: GameInfo[]) {
     }
   })
   const dbId = db?.results?.at(0)?.id;
-  console.log(db.results);
   if (!dbId) {
     console.log("Database ID not found");
     return;
   }
   for (const game of games) {
-    const pageId = await getPage(dbId, String(game.name));
+    const pageId = await getPage(dbId, String(game.appid));
+    const props = await getNewProperties(game, pageId ?? undefined)
     if (pageId) {
       await notion.pages.update({
         page_id: pageId,
-        properties: {
-        }
+        properties: props,
       })
 
     } else {
-      const details = await getGameDetails(game.appid);
-      console.log("test", details);
       await notion.pages.create({
         parent: {
           database_id: dbId,
@@ -72,41 +110,7 @@ async function updateEntries(games: GameInfo[]) {
             url: `https://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_icon_url}.jpg`
           }
         },
-        properties: {
-          "ID": {
-            type: "rich_text",
-            rich_text: [{
-              type: "text",
-              text: {
-                content: String(game.appid)
-              }
-            }],
-          },
-          "Name": {
-            type: "title",
-            title: [{
-              type: "text",
-              text: {
-                content: game.name,
-              },
-            }]
-          },
-          "Generos": {
-            type: "multi_select",
-            multi_select: details?.genres?.map(genre => ({ name: genre.description })) ?? [],
-          },
-          "Categories": {
-            type: "multi_select",
-            multi_select: details?.categories?.map(category => ({ name: category.description })) ?? [],
-          },
-          "Desarrollador": {
-            type: "multi_select",
-            multi_select: details?.developers?.map(dev => ({ name: dev ?? "" })) ?? []
-          },
-          // "Date Started": {
-          //   type: "date",
-          // },
-        }
+        properties: props,
       })
 
 
