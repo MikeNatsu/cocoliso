@@ -16,7 +16,7 @@ export interface GameInfo {
   playtime_2weeks?: number
 }
 
-export interface GameDetails{
+export interface GameDetails {
   type: string
   name: string
   steam_appid: number
@@ -243,3 +243,22 @@ export interface SteamGermany {
   use_age_gate: string
   descriptors: string
 }
+
+
+export interface AchievementAPI {
+  playerstats: Playerstats
+}
+
+export interface Playerstats {
+  steamID: string
+  gameName: string
+  achievements: Achievement[]
+  success: boolean
+}
+
+export interface Achievement {
+  apiname: string
+  achieved: number
+  unlocktime: number
+}
+

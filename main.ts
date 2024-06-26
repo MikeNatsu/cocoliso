@@ -1,7 +1,8 @@
-import { GameDetails, GameInfo } from "./types.ts";
+import { AchievementAPI, GameDetails, GameInfo } from "./types.ts";
 import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
-import { CreatePageBodyParameters } from "https://deno.land/x/notion_sdk@v2.2.3/src/api-endpoints.ts";
+import { CreateDatabaseBodyParameters, CreatePageBodyParameters } from "https://deno.land/x/notion_sdk@v2.2.3/src/api-endpoints.ts";
 import { Client } from "https://deno.land/x/notion_sdk@v2.2.3/src/mod.ts";
+import { logger, sleep } from "./utils.ts";
 
 
 const env = await load();
@@ -36,10 +37,29 @@ async function getGameDetails(appId: GameInfo['appid']) {
 
 }
 
+async function getAchievementPercentage(game: GameInfo): Promise<number> {
+  const env = await load();
+  const accountId = env["STEAM_ACCOUNT_ID"];
+  const apiKey = env["STEAM_KEY"];
+  const params = new URLSearchParams({
+    appid: game.appid.toString(),
+    key: apiKey,
+    steamid: accountId,
+  })
+  const res = await fetch('https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v0001/?' + params.toString());
+  const data: AchievementAPI = await res.json();
+  console.log("DATA:", data);
+  const achievements = data?.playerstats?.achievements ?? [];
+  const completedTotal = achievements?.filter(achievement => achievement.achieved === 1).length;
+  if (achievements.length === 0) return 0;
+  return Number((completedTotal / achievements.length).toFixed(2));
+}
+
 
 // deno-lint-ignore no-explicit-any
 async function getNewProperties(game: GameInfo, pageId?: string): Promise<Record<string, any>> {
   const details = await getGameDetails(game.appid);
+  const achievementPercentage = await getAchievementPercentage(game);
   const body = {
     properties: {
       "ID": {
@@ -72,6 +92,10 @@ async function getNewProperties(game: GameInfo, pageId?: string): Promise<Record
         type: "multi_select",
         multi_select: details?.developers?.map(dev => ({ name: dev?.replaceAll(',', ' ') ?? "" })) ?? []
       },
+      "achievements": {
+        type: "number",
+        number: achievementPercentage,
+      },
     } as CreatePageBodyParameters['properties']
   }
   return body.properties;
@@ -87,10 +111,11 @@ async function updateEntries(games: GameInfo[]) {
   })
   const dbId = db?.results?.at(0)?.id;
   if (!dbId) {
-    console.log("Database ID not found");
+    logger("Database ID not found");
     return;
   }
   for (const game of games) {
+    logger('Processing Game: ', game.name);
     const pageId = await getPage(dbId, String(game.appid));
     const props = await getNewProperties(game, pageId ?? undefined)
     if (pageId) {
@@ -119,29 +144,9 @@ async function updateEntries(games: GameInfo[]) {
   }
 
 }
-async function createDatabase() {
-  const db = await notion.search({
-    query: "Steam Videojuegos",
-    filter: {
-      property: "object",
-      value: "database"
-    }
-  })
-  if (db?.results?.length !== 0) {
-    console.log("Database was already created. Skipping...")
-    return;
-  }
-  await notion.databases.create({
-    parent: {
-      type: "page_id",
-      page_id: mainPage,
-    },
-    title: [{
-      type: "text",
-      text: {
-        content: "Steam Videojuegos"
-      }
-    }],
+
+function getDatabaseProperties(): Record<string, any> {
+  const body = {
     properties: {
       "ID": {
         type: "rich_text",
@@ -179,7 +184,47 @@ async function createDatabase() {
         type: "date",
         date: {}
       },
+      "achievements": {
+        type: "number",
+        number: {
+          format: "percent"
+        }
+      },
+    } as CreateDatabaseBodyParameters['properties']
+  }
+  return body.properties;
+}
+
+
+async function createDatabase() {
+  const db = await notion.search({
+    query: "Steam Videojuegos",
+    filter: {
+      property: "object",
+      value: "database"
     }
+  })
+  const props = getDatabaseProperties();
+  if (db?.results?.length !== 0) {
+    logger("Database was already created. Updating schema...")
+    await notion.databases.update({
+      database_id: db.results?.[0].id,
+      properties: props,
+    })
+    return;
+  }
+  await notion.databases.create({
+    parent: {
+      type: "page_id",
+      page_id: mainPage,
+    },
+    title: [{
+      type: "text",
+      text: {
+        content: "Steam Videojuegos"
+      }
+    }],
+    properties: props,
   })
 
 }
@@ -200,7 +245,9 @@ async function getSteamAccountData() {
 
 if (import.meta.main) {
   const games = await getSteamAccountData();
-  await createDatabase()
+  logger('Steam Games fetched. Attempting Database build...')
+  await createDatabase();
+  await sleep(5000);
   await updateEntries(games);
 
 }
